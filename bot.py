@@ -14,6 +14,8 @@ from telegram.ext import (
     CallbackQueryHandler,
 )
 from datetime import datetime, timedelta
+import asyncio
+from aiohttp import web
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -83,7 +85,26 @@ async def get_weather_for_meeting(city: str, date_str: str, time_str: str) -> st
         )
     except Exception as e:
         return f"⚠️ Ошибка при получении прогноза: {e}"
+async def health_check(request):
+    return web.Response(text="OK", status=200)
 
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    app.router.add_get('/health', health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    print(f"✅ Web server started on port {port}")
+
+# ========== ЗАПУСК ВЕБ-СЕРВЕРА В ФОНЕ ==========
+def run_web_server():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(start_web_server())
+    loop.run_forever()
 # ---------------------- Функции БД ----------------------
 def format_date(date_str):
     """Преобразует 'YYYY-MM-DD' в 'DD Месяц YYYY' на русском."""
@@ -981,6 +1002,9 @@ def main():
     )
 
     app = Application.builder().token(TOKEN).build()
+    import threading
+    web_thread = threading.Thread(target=run_web_server, daemon=True)
+    web_thread.start()
     app.add_handler(conv_handler)
     restore_reminders(app)
     print("Гойда, братья!")
