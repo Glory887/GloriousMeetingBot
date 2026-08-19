@@ -18,11 +18,12 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+MONTHS = {
+    1: "января", 2: "февраля", 3: "марта", 4: "апреля",
+    5: "мая", 6: "июня", 7: "июля", 8: "августа",
+    9: "сентября", 10: "октября", 11: "ноября", 12: "декабря"
+}
 
-try:
-    locale.setlocale(locale.LC_TIME, 'ru_RU.UTF-8')
-except:
-    locale.setlocale(locale.LC_TIME, 'Russian_Russia')
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
 WEATHER_API_KEY = os.environ.get('WEATHER_API_KEY')
 DB_NAME = "meetings.db"  # ваш реальный ключ
@@ -85,9 +86,12 @@ async def get_weather_for_meeting(city: str, date_str: str, time_str: str) -> st
 
 # ---------------------- Функции БД ----------------------
 def format_date(date_str):
-    """Преобразует строку 'YYYY-MM-DD' в 'DD Месяц YYYY'"""
+    """Преобразует 'YYYY-MM-DD' в 'DD Месяц YYYY' на русском."""
     dt = datetime.strptime(date_str, "%Y-%m-%d")
-    return dt.strftime("%d %B %Y")
+    day = dt.day
+    month = MONTHS[dt.month]
+    year = dt.year
+    return f"{day} {month} {year}"
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
