@@ -2,6 +2,7 @@ import logging
 import sqlite3
 import locale
 import requests
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -13,7 +14,6 @@ from telegram.ext import (
     CallbackQueryHandler,
 )
 from datetime import datetime, timedelta
-
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -23,9 +23,9 @@ try:
     locale.setlocale(locale.LC_TIME, 'ru_RU.UTF-8')
 except:
     locale.setlocale(locale.LC_TIME, 'Russian_Russia')
-
-DB_NAME = "meetings.db"
-WEATHER_API_KEY = "3f8c4c6431513b1cc8d8c61b8b05c446"  # ваш реальный ключ
+TOKEN = os.environ.get('TELEGRAM_TOKEN')
+WEATHER_API_KEY = os.environ.get('WEATHER_API_KEY')
+DB_NAME = "meetings.db"  # ваш реальный ключ
 main_admin = 1644253455
 REMIND_BEFORE_HOURS4 = 1
 REMIND_BEFORE_HOURS3 = 2
@@ -976,7 +976,7 @@ def main():
         per_message=False
     )
 
-    app = Application.builder().token('8977310469:AAEVASk5LHXpGF8hFmweLMPdi8yMs8e5OKk').build()
+    app = Application.builder().token(TOKEN).build()
     app.add_handler(conv_handler)
     restore_reminders(app)
     print("Гойда, братья!")
