@@ -1,6 +1,6 @@
 import logging
 import sqlite3
-import locale
+import zoneinfo
 import requests
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -20,6 +20,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+MOSCOW_TZ = zoneinfo.ZoneInfo("Europe/Moscow")
 MONTHS = {
     1: "января", 2: "февраля", 3: "марта", 4: "апреля",
     5: "мая", 6: "июня", 7: "июля", 8: "августа",
@@ -106,13 +107,22 @@ def run_web_server():
     loop.run_until_complete(start_web_server())
     loop.run_forever()
 # ---------------------- Функции БД ----------------------
-def format_date(date_str):
-    """Преобразует 'YYYY-MM-DD' в 'DD Месяц YYYY' на русском."""
-    dt = datetime.strptime(date_str, "%Y-%m-%d")
-    day = dt.day
-    month = MONTHS[dt.month]
-    year = dt.year
-    return f"{day} {month} {year}"
+def format_datetime_moscow(date_str: str, time_str: str) -> str:
+    """Преобразует UTC дату и время в строку с московским временем и русским месяцем."""
+    moscow_tz = zoneinfo.ZoneInfo("Europe/Moscow")
+    utc_tz = zoneinfo.ZoneInfo("UTC")
+    # Парсим как UTC
+    dt_utc = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+    dt_utc = dt_utc.replace(tzinfo=utc_tz)
+    # Переводим в Москву
+    dt_moscow = dt_utc.astimezone(moscow_tz)
+    # Форматируем с русским месяцем
+    day = dt_moscow.day
+    month = MONTHS[dt_moscow.month]
+    year = dt_moscow.year
+    hour = dt_moscow.hour
+    minute = dt_moscow.minute
+    return f"{day} {month} {year} {hour:02d}:{minute:02d}"
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -403,7 +413,7 @@ async def send_meeting_reminder(context):
         return
     row = meeting_info[0]
     text = (f"Напоминание о встрече!\n\n"
-            f"Встреча {format_date(row[1])}\n"
+            f"Встреча {format_datetime_moscow(row[1],row[2])}(По МСК)\n"
             f"Место: {row[3]}\n"
             f"Комментарий: {row[4] or 'отсутствует'}\n\n"
             f"До встречи осталось {hours}")
@@ -502,8 +512,7 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 keyboard = [[invite_btn]]
 
                 text = ""
-                text += f"Дата: {format_date(row[1])}\n"
-                text += f"Время: {row[2]}\n"
+                text += f"Дата: {format_datetime_moscow(row[1],row[2])}(По МСК)\n"
                 text += f"Место: {row[3]}\n"
                 text += f"Комментарий: {row[4]}\n\n"
                 try:
@@ -726,38 +735,43 @@ async def datereceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def timereceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = update.message.text.strip()
 
-    # 1. Проверяем формат и корректность времени
+    # Проверка формата времени
     try:
-        datetime.strptime(time_str, "%H:%M")  # Если ошибка – значит невалидное время
+        datetime.strptime(time_str, "%H:%M")
     except ValueError:
         await update.message.reply_text(
             "❌ Неверный формат времени. Введите время в формате ЧЧ:ММ, например 14:30"
         )
-        return TIME  # остаёмся в состоянии TIME
+        return TIME
 
-    # 2. Сохраняем время в context
-    context.user_data['time'] = time_str
-
-    # 3. Проверяем, что дата+время не в прошлом
     date_str = context.user_data.get("date")
-    if not date_str:
-        await update.message.reply_text("Ошибка: дата не указана. Начните заново /start")
-        return ConversationHandler.END
 
-    try:
-        meeting_datetime = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
-        if meeting_datetime < datetime.now():
-            await update.message.reply_text("❌ Эта дата и время уже прошли. Выберите будущее время.")
-            return DATE  # возвращаем на ввод даты
-    except ValueError:
-        await update.message.reply_text("Ошибка в дате или времени. Попробуйте ещё раз.")
+    # --- КОНВЕРТАЦИЯ В UTC ---
+    moscow_tz = zoneinfo.ZoneInfo("Europe/Moscow")
+    utc_tz = zoneinfo.ZoneInfo("UTC")
+
+    # 1. Создаем datetime в МСК (без часового пояса, затем назначаем)
+    dt_moscow = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+    dt_moscow = dt_moscow.replace(tzinfo=moscow_tz)
+
+    # 2. Переводим в UTC
+    dt_utc = dt_moscow.astimezone(utc_tz)
+
+    # 3. Проверяем, не прошло ли время (сравниваем UTC с текущим UTC)
+    if dt_utc < datetime.now(utc_tz):
+        await update.message.reply_text("❌ Эта дата и время уже прошли. Выберите будущее время.")
         return DATE
 
-    # 4. Показываем погоду, если есть город
+    # 4. Сохраняем в context уже UTC-время
+    context.user_data['date'] = dt_utc.strftime("%Y-%m-%d")
+    context.user_data['time'] = dt_utc.strftime("%H:%M")
+
+    # --- Показ погоды (город тоже должен быть в UTC, но погода берется по дате/времени, это не критично) ---
     keyboard = [[exit]]
     city = get_city(update.message.from_user.id)
     if city:
-        weather = await get_weather_for_meeting(city, date_str, time_str)
+        # Передаем уже UTC-дату и время – get_weather_for_meeting ожидает строки
+        weather = await get_weather_for_meeting(city, context.user_data['date'], context.user_data['time'])
         await context.bot.send_message(
             chat_id=update.message.chat_id,
             text=weather,
@@ -769,7 +783,6 @@ async def timereceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text="Если хотите увидеть прогноз погоды для своего города на этот день – введите название города в главном меню."
         )
 
-    # 5. Переходим к месту
     await update.message.reply_text(
         'Какое прекрасное место станет вашей точкой встречи (лучше пиши с предлогом, например "в торговом центре")?'
     )
@@ -879,7 +892,7 @@ async def invitee_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=invitee_id,
                 text=f"Тебя пригласили на встречу 😍\n\n"
-                     f"{format_date(date)} в {time},\n встреча намечается {place} 🤯\n"
+                     f"{format_datetime_moscow(date,time)},\n встреча намечается {place} 🤯\n"
                      f"Ты придешь? 🤨",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("✅ Да, конечно!", callback_data=f"accept_{meeting_id}_{invitee_id}"),
