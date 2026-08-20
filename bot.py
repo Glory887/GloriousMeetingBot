@@ -729,7 +729,7 @@ async def datereceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("Неверный формат, используй ДД.ММ.ГГГГ")
         return DATE
-    await update.message.reply_text('Отлично, во сколько хочешь встретиться? (формат ЧЧ:ММ)')
+    await update.message.reply_text('Отлично, во сколько хочешь встретиться? (формат ЧЧ:ММ, время по МСК)')
     return TIME
 
 async def timereceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
