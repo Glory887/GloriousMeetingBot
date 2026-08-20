@@ -97,7 +97,10 @@ async def get_ai(forecast,place):
     if not OPENAI_API_KEY:
         return "⚠️ Нейросеть не настроена: отсутствует API-ключ."
     try:
-        client = OpenAI(api_key=OPENAI_API_KEY)
+        client = OpenAI(
+            api_key=OPENAI_API_KEY,
+            base_url="https://openrouter.ai/api/v1"
+        )
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
