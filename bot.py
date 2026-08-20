@@ -723,18 +723,28 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MENU
     elif data.startswith("ai_"):
         parts = data.split("_")
-        meeting_id, user_id= int(parts[1]), int(parts[2])
-        rows= get_meeting_info(meeting_id)
-        row=rows[0]
-        date,time,place=row[1],row[2],row[3]
-        keyboard=[[exit]]
-        forecast=get_weather_for_meeting(get_city(user_id),date,time)
-        print(f"Прогноз для нейросети: {forecast}")
+        if len(parts) < 3:
+            await query.edit_message_text("Ошибка в данных.")
+            return MENU
+        meeting_id, user_id = int(parts[1]), int(parts[2])
+        rows = get_meeting_info(meeting_id)
+        if not rows:
+            await query.edit_message_text("Встреча не найдена.")
+            return MENU
+        row = rows[0]
+        date, time, place = row[1], row[2], row[3]
+        city = get_city(user_id)
+        if not city or city == "0":
+            advice = "⚠️ Сначала укажите свой город в меню."
+        else:
+            forecast = await get_weather_for_meeting(city, date, time)   # ← добавлен await
+            advice = await get_ai(forecast, place)                      # ← здесь тоже
+        keyboard = [[exit]]
         await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text= await get_ai(forecast,place),
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
+            chat_id=query.message.chat_id,
+            text=advice,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         return MENU
     elif data == "deleteuser":
         await context.bot.send_message(chat_id=query.message.chat_id, text="Введите ID пользователя")
