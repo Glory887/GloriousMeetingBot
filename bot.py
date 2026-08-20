@@ -1021,7 +1021,7 @@ def main():
     app.add_handler(conv_handler)
     restore_reminders(app)
     print("Гойда, братья!")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
