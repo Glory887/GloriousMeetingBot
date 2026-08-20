@@ -14,6 +14,8 @@ from telegram.ext import (
     CallbackQueryHandler,
 )
 from datetime import datetime, timedelta
+from openai import OpenAI
+
 import asyncio
 from aiohttp import web
 logging.basicConfig(
@@ -29,6 +31,7 @@ MONTHS = {
 
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
 WEATHER_API_KEY = os.environ.get('WEATHER_API_KEY')
+OPENAI_API_KEY=os.environ.get('OPENAI_API_KEY')
 DB_NAME = "meetings.db"  # ваш реальный ключ
 main_admin = 1644253455
 REMIND_BEFORE_HOURS4 = 1
@@ -37,7 +40,7 @@ REMIND_BEFORE_HOURS2 = 24
 REMIND_BEFORE_HOURS1 = 48
 
 # Состояния диалога (числа)
-MENU, DATE, TIME, PLACE, COMMENT, LIST, INVITEE, ADMIN, ADMINLIST, DELETE, CITY = 887, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+MENU, DATE, TIME, PLACE, COMMENT, LIST, INVITEE, ADMIN, ADMINLIST, DELETE, CITY, = 887, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
 exit = InlineKeyboardButton("Меню", callback_data="menu")
 
 # ---------------------- Функция погоды ----------------------
@@ -46,12 +49,14 @@ async def get_weather_for_meeting(city: str, date_str: str, time_str: str) -> st
     Возвращает прогноз погоды в городе на указанную дату и время.
     date_str: "YYYY-MM-DD", time_str: "HH:MM"
     """
-    url = (
-        f"http://api.openweathermap.org/data/2.5/forecast"
-        f"?q={city}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
-    )
     try:
-        response = requests.get(url)
+        params = {
+    'q': city,
+    'appid': WEATHER_API_KEY,
+    'units': 'metric',
+    'lang': 'ru'
+}
+        response = requests.get("http://api.openweathermap.org/data/2.5/forecast", params=params)
         data = response.json()
         if data.get("cod") != "200":
             return f"❌ Ошибка: {data.get('message', 'город не найден')}"
@@ -76,7 +81,9 @@ async def get_weather_for_meeting(city: str, date_str: str, time_str: str) -> st
         humidity = best["main"]["humidity"]
         wind = best["wind"]["speed"]
 
-        forecast_time = datetime.fromtimestamp(best["dt"]).strftime("%d.%m.%Y %H:%M")
+        dt_utc = datetime.fromtimestamp(best["dt"])
+        dt_moscow = dt_utc.replace(tzinfo=zoneinfo.ZoneInfo("UTC")).astimezone(zoneinfo.ZoneInfo("Europe/Moscow"))
+        forecast_time = dt_moscow.strftime("%d.%m.%Y %H:%M")
         return (
             f"🌤️ Прогноз погоды в {city} на {forecast_time}:\n"
             f"🌡️ Температура: {temp}°C (ощущается как {feels_like}°C)\n"
@@ -86,9 +93,24 @@ async def get_weather_for_meeting(city: str, date_str: str, time_str: str) -> st
         )
     except Exception as e:
         return f"⚠️ Ошибка при получении прогноза: {e}"
+async def get_ai(forecast,place):
+    if not OPENAI_API_KEY:
+        return "⚠️ Нейросеть не настроена: отсутствует API-ключ."
+    try:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "Ты – стилист. Давай советы по одежде, учитывая погоду и место встречи. Отвечай кратко, по делу и по-дружески.Уложись в 20-30 слов максимум."},
+                {"role": "user", "content": f"Скажи что надеть, исходя из этого прогноза погоды и что я пойду {place}: {forecast}"}
+            ],
+            max_tokens=300,
+            temperature=0.7)
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"⚠️ Ошибка при обращении к нейросети: {e}"
 async def health_check(request):
     return web.Response(text="OK", status=200)
-
 async def start_web_server():
     app = web.Application()
     app.router.add_get('/', health_check)
@@ -158,7 +180,7 @@ def init_db():
     if 'is_admin' not in columns:
         cur.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
     if 'city' not in columns:   # отдельная проверка для city
-        cur.execute("ALTER TABLE users ADD COLUMN city TEXT DEFAULT ''")
+        cur.execute("ALTER TABLE users ADD COLUMN city TEXT DEFAULT '0'")
     conn.commit()
     conn.close()
 
@@ -558,6 +580,9 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 callback = f"change_{row[0]}_{user_id}_{get_status(row[0], user_id)}"
                 keyboard.append([InlineKeyboardButton("Изменить свой статус", callback_data=callback)])
+                if city!="0" and city is not None:
+                    callback=f"ai_{row[0]}_{user_id}"
+                    keyboard.append([InlineKeyboardButton("Посмотреть совет от нейросети", callback_data=callback)])
                 meetings_count += 1
 
                 await context.bot.send_message(
@@ -695,7 +720,19 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return MENU
-
+    elif data.startswith("ai_"):
+        parts = data.split("_")
+        meeting_id, user_id= int(parts[1]), int(parts[2])
+        rows= get_meeting_info(meeting_id)
+        row=rows[0]
+        date,time,place=row[1],row[2],row[3]
+        keyboard=[[exit]]
+        await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text= await get_ai(get_weather_for_meeting(get_city(user_id),date,time),place),
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+        return MENU
     elif data == "deleteuser":
         await context.bot.send_message(chat_id=query.message.chat_id, text="Введите ID пользователя")
         return DELETE
