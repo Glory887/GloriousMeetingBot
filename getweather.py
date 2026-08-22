@@ -1,5 +1,5 @@
 import zoneinfo
-from db import WEATHER_API_KEY
+from config import WEATHER_API_KEY
 import requests
 from datetime import datetime
 async def get_weather_for_meeting(city: str, date_str: str, time_str: str) -> str:
