@@ -24,5 +24,4 @@ def format_datetime_moscow(date_str: str, time_str: str) -> str:
 def format_datetime_utc(date_str: str, time_str: str) -> str:
     """Преобразует UTC дату и время в строку с UTC временем (без перевода в МСК)."""
     dt_utc = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
-    # Оставляем как UTC, выводим в формате ГГГГ-ММ-ДД ЧЧ:ММ UTC
     return dt_utc.strftime("%Y-%m-%d %H:%M UTC")

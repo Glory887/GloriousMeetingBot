@@ -40,7 +40,6 @@ async def get_weather_for_meeting(city: str, date_str: str, time_str: str, lang:
         humidity = best["main"]["humidity"]
         wind = best["wind"]["speed"]
 
-        # Форматируем время в зависимости от языка
         dt_utc = datetime.fromtimestamp(best["dt"])
         if lang == 'en':
             forecast_time = dt_utc.strftime("%Y-%m-%d %H:%M UTC")
