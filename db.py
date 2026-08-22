@@ -237,3 +237,18 @@ def update_city(user_id, city):
     cur.execute("UPDATE users SET city=? WHERE user_id=?", (city, user_id))
     conn.commit()   # исправлено: добавлены скобки
     conn.close()
+    
+def get_user_lang(user_id):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT lang FROM users WHERE user_id=?", (user_id,))
+    row = cur.fetchone()
+    conn.close()
+    return row[0] if row and row[0] else 'ru'   # по умолчанию русский
+
+def set_user_lang(user_id, lang):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET lang=? WHERE user_id=?", (lang, user_id))
+    conn.commit()
+    conn.close()
