@@ -9,17 +9,10 @@ import sqlite3
 from datetime import datetime
 import zoneinfo
 from utils import format_datetime_moscow
-from reminder import send_meeting_reminder,get_remind_datetime
+from reminder import send_meeting_reminder, get_remind_datetime
 from ai import get_ai
 from getweather import get_weather_for_meeting
-
-# Здесь должны быть импорты вспомогательных функций, которые не относятся к db/config
-# Например:
-# from utils import format_datetime_moscow, get_remind_datetime
-# from weather import get_weather_for_meeting
-# from ai import get_ai
-# from reminders import send_meeting_reminder
-# Но они не входят в задачу, поэтому оставляем как есть.
+from config import menu_btn  # ← импорт кнопки "Меню"
 
 
 async def sendMENU(update_or_query, context):
@@ -184,7 +177,7 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
         meeting_id = int(data.split("_")[1])
         db.delete_meeting(meeting_id)
         text = "Встреча удалена."
-        keyboard = [[exit]]
+        keyboard = [[menu_btn]]
         await context.bot.send_message(
             chat_id=query.message.chat_id,
             text=text,
@@ -201,7 +194,7 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows = db.get_all_status(meeting_id)
         users = db.get_name_from_user_id(user_id)
         fname, uname = users
-        keyboard = [[exit]]
+        keyboard = [[menu_btn]]
         label = f"{fname} ({uname})" if fname and uname else fname or uname or str(user_id)
 
         if status == "accepted":
@@ -232,14 +225,14 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=query.message.chat_id,
             text="Статус изменён.",
-            reply_markup=InlineKeyboardMarkup([[exit]])
+            reply_markup=InlineKeyboardMarkup([[menu_btn]])
         )
         return config.MENU
 
     elif data.startswith("invite_"):
         meeting_id = int(data.split("_")[1])
         users = db.get_all_users()
-        keyboard = [[exit]]
+        keyboard = [[menu_btn]]
         if not users:
             await query.edit_message_text(
                 "Попроси друзей написать /start боту!",
@@ -295,7 +288,7 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
             i += 1
             fname, uname, uid = u
             text += f"{i}. {fname} {uname} {uid}\n"
-        keyboard = [[exit], [InlineKeyboardButton("Удалить пользователя", callback_data="deleteuser")]]
+        keyboard = [[menu_btn], [InlineKeyboardButton("Удалить пользователя", callback_data="deleteuser")]]
         await context.bot.send_message(
             chat_id=query.message.chat_id,
             text=text,
@@ -321,7 +314,7 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             forecast = await get_weather_for_meeting(city, date, time)
             advice = await get_ai(forecast, place)
-        keyboard = [[exit]]
+        keyboard = [[menu_btn]]
         await context.bot.send_message(
             chat_id=query.message.chat_id,
             text=advice,
@@ -393,7 +386,7 @@ async def timereceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['date'] = dt_utc.strftime("%Y-%m-%d")
     context.user_data['time'] = dt_utc.strftime("%H:%M")
 
-    keyboard = [[exit]]
+    keyboard = [[menu_btn]]
     city = db.get_city(update.message.from_user.id)
     if city:
         weather = await get_weather_for_meeting(city, context.user_data['date'], context.user_data['time'])
@@ -436,7 +429,7 @@ async def commentreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Пригласить друга",
         callback_data=f"invite_{meeting_id}"
     )
-    keyboard = [[invite_btn], [exit]]
+    keyboard = [[invite_btn], [menu_btn]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
@@ -544,7 +537,7 @@ async def invitee_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[exit]]
+    keyboard = [[menu_btn]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text('Окей, отменил твою встречу', reply_markup=reply_markup)
     return ConversationHandler.END
@@ -558,8 +551,8 @@ async def adminreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return config.ADMINLIST
 
     if db.user_exists(user_id):
-        keyboard = [[InlineKeyboardButton("Открыть список администраторов", callback_data="adminlist")], [exit]]
-        keyboardm = [[exit]]
+        keyboard = [[InlineKeyboardButton("Открыть список администраторов", callback_data="adminlist")], [menu_btn]]
+        keyboardm = [[menu_btn]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         if db.check_admin(user_id):
@@ -573,7 +566,7 @@ async def adminreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup = InlineKeyboardMarkup(keyboardm)
             await context.bot.send_message(chat_id=user_id, text="Выданы права администратора", reply_markup=reply_markup)
     else:
-        keyboard = [[exit]]
+        keyboard = [[menu_btn]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await context.bot.send_message(chat_id=user_id, text="Пользователь не найден, проверьте ID!", reply_markup=reply_markup)
 
@@ -591,7 +584,7 @@ async def adminlistreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
         i += 1
         text += f"{i}. {fname} {uname} {adm[0]}\n\n"
 
-    keyboard = [[InlineKeyboardButton("Дать/забрать права администратора", callback_data="admin")], [exit]]
+    keyboard = [[InlineKeyboardButton("Дать/забрать права администратора", callback_data="admin")], [menu_btn]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await context.bot.send_message(chat_id=query.message.chat_id, text=text, reply_markup=reply_markup)
     return config.MENU
@@ -604,7 +597,7 @@ async def deletereceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Введите корректный числовой ID.")
         return config.MENU
 
-    reply_markup = InlineKeyboardMarkup([[exit], [InlineKeyboardButton("Список пользователей", callback_data="user")]])
+    reply_markup = InlineKeyboardMarkup([[menu_btn], [InlineKeyboardButton("Список пользователей", callback_data="user")]])
     if db.user_exists(user_id):
         db.delete_user(user_id)
         await update.message.reply_text("Пользователь удален", reply_markup=reply_markup)
@@ -617,9 +610,9 @@ async def deletereceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cityreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
     city = update.message.text.strip()
     if not city:
-        await update.message.reply_text("Введите корректное название города", reply_markup=InlineKeyboardMarkup([[exit]]))
+        await update.message.reply_text("Введите корректное название города", reply_markup=InlineKeyboardMarkup([[menu_btn]]))
         return config.CITY
 
     db.update_city(update.message.from_user.id, city)
-    await update.message.reply_text(f"Город изменен на {city}", reply_markup=InlineKeyboardMarkup([[exit]]))
+    await update.message.reply_text(f"Город изменен на {city}", reply_markup=InlineKeyboardMarkup([[menu_btn]]))
     return config.MENU

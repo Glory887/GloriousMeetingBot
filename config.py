@@ -1,6 +1,7 @@
 import os
 import logging
 import zoneinfo
+from telegram import InlineKeyboardButton
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -22,5 +23,6 @@ REMIND_BEFORE_HOURS3 = 2
 REMIND_BEFORE_HOURS2 = 24
 REMIND_BEFORE_HOURS1 = 48
 
+menu_btn = InlineKeyboardButton("Меню", callback_data="menu")
 # Состояния диалога (числа)
 MENU, DATE, TIME, PLACE, COMMENT, LIST, INVITEE, ADMIN, ADMINLIST, DELETE, CITY, = 887, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
