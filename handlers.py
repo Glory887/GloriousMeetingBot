@@ -1,8 +1,5 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ConversationHandler,
-    ContextTypes,
-)
+from telegram.ext import ConversationHandler, ContextTypes
 import config
 import db
 import sqlite3
@@ -12,19 +9,25 @@ from utils import format_datetime_moscow
 from reminder import send_meeting_reminder, get_remind_datetime
 from ai import get_ai
 from getweather import get_weather_for_meeting
-from config import menu_btn  # ← импорт кнопки "Меню"
+from i18n import get_text
+from db import get_user_lang, set_user_lang
 
 
 async def sendMENU(update_or_query, context):
-    meeting_btn = InlineKeyboardButton("Назначить встречу", callback_data="meetings")
-    list_btn = InlineKeyboardButton("Посмотреть список встреч", callback_data="lists")
-    end_btn = InlineKeyboardButton("Завершить", callback_data="end")
-    city_btn = InlineKeyboardButton("Изменить город", callback_data="city")
-
+    # Определяем user_id
     if update_or_query.callback_query and update_or_query.callback_query.message:
         user_id = update_or_query.callback_query.from_user.id
     else:
         user_id = update_or_query.effective_user.id
+
+    lang = get_user_lang(user_id)
+
+    # Кнопки с текстами из JSON
+    meeting_btn = InlineKeyboardButton(get_text(lang, 'meeting_btn'), callback_data="meetings")
+    list_btn = InlineKeyboardButton(get_text(lang, 'list_btn'), callback_data="lists")
+    city_btn = InlineKeyboardButton(get_text(lang, 'city_btn'), callback_data="city")
+    end_btn = InlineKeyboardButton(get_text(lang, 'end_btn'), callback_data="end")
+    lang_btn = InlineKeyboardButton(get_text(lang, 'change_lang'), callback_data="switch_lang")
 
     if user_id == config.main_admin:
         keyboard = [
@@ -32,8 +35,9 @@ async def sendMENU(update_or_query, context):
             [list_btn],
             [city_btn],
             [end_btn],
-            [InlineKeyboardButton("Список пользователей", callback_data="user")],
-            [InlineKeyboardButton("Список администраторов", callback_data="adminlist")]
+            [InlineKeyboardButton(get_text(lang, 'user_list'), callback_data="user")],
+            [InlineKeyboardButton(get_text(lang, 'admin_list'), callback_data="adminlist")],
+            [lang_btn]
         ]
     elif db.check_admin(user_id):
         keyboard = [
@@ -41,14 +45,16 @@ async def sendMENU(update_or_query, context):
             [list_btn],
             [city_btn],
             [end_btn],
-            [InlineKeyboardButton("Список пользователей", callback_data="user")]
+            [InlineKeyboardButton(get_text(lang, 'user_list'), callback_data="user")],
+            [lang_btn]
         ]
     else:
         keyboard = [
             [meeting_btn],
             [list_btn],
             [city_btn],
-            [end_btn]
+            [end_btn],
+            [lang_btn]
         ]
 
     if update_or_query.callback_query and update_or_query.callback_query.message:
@@ -58,7 +64,7 @@ async def sendMENU(update_or_query, context):
 
     await context.bot.send_message(
         chat_id=chat_id,
-        text="Выберите опцию:",
+        text=get_text(lang, 'main_menu'),
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -83,16 +89,16 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    user_id = query.from_user.id
+    lang = get_user_lang(user_id)
 
     if data == "meetings":
         await query.edit_message_text(
-            'Напиши, какого числа произойдет встреча (формат ДД.ММ.ГГГГ):\n\n'
-            'Если передумаешь, пропиши /cancel'
+            get_text(lang, 'ask_date') + "\n\n" + get_text(lang, 'cancel_hint')
         )
         return config.DATE
 
     elif data == "lists":
-        user_id = query.from_user.id
         rows = db.get_all_meetings(user_id)
         meetings_count = 0
 
@@ -104,15 +110,17 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             for row in meetings:
                 invite_btn = InlineKeyboardButton(
-                    "Пригласить друга",
+                    get_text(lang, 'invite_friend'),
                     callback_data=f"invite_{row[0]}"
                 )
                 keyboard = [[invite_btn]]
 
                 text = ""
-                text += f"Дата: {format_datetime_moscow(row[1],row[2])}(По МСК)\n"
-                text += f"Место: {row[3]}\n"
-                text += f"Комментарий: {row[4]}\n\n"
+                # Используем ключи из вашего JSON – добавьте в JSON ключи date_label, place_label, comment_label
+                text += f"📅 {get_text(lang, 'date_label')}: {format_datetime_moscow(row[1], row[2])} (МСК)\n"
+                text += f"📍 {get_text(lang, 'place_label')}: {row[3]}\n"
+                text += f"💬 {get_text(lang, 'comment_label')}: {row[4]}\n\n"
+
                 try:
                     meeting_datetime = datetime.strptime(f"{row[1]} {row[2]}", "%Y-%m-%d %H:%M")
                 except ValueError:
@@ -122,28 +130,30 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if meeting_datetime < datetime.now():
                     db.delete_meeting(row[0])
                     continue
+
                 city = db.get_city(user_id)
                 if city:
                     weather_text = await get_weather_for_meeting(city, row[1], row[2])
                     text += weather_text + "\n\n"
                 else:
-                    text += "ℹ️ Для прогноза погоды укажите город в меню.\n\n"
+                    # Используем city_hint (добавьте в JSON)
+                    text += get_text(lang, 'city_hint') + "\n\n"
 
                 answers = db.get_all_status(row[0])
                 count = 0
                 for i in answers[0]:
                     uname, fname = db.get_name_from_user_id(i[0])
                     name = f"{fname} ({uname})" if fname else uname
-                    text += f"{name} согласен✅\n"
+                    text += f"{name} ✅\n"
                     count += 1
                 for i in answers[1]:
                     uname, fname = db.get_name_from_user_id(i[0])
                     name = f"{fname} ({uname})" if fname else uname
-                    text += f"{name} не ответил🤨\n"
+                    text += f"{name} 🤨\n"
                 for i in answers[2]:
                     uname, fname = db.get_name_from_user_id(i[0])
                     name = f"{fname} ({uname})" if fname else uname
-                    text += f"{name} отказался❌\n"
+                    text += f"{name} ❌\n"
 
                 if count == 0:
                     db.delete_meeting(row[0])
@@ -151,13 +161,15 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if count == 1 and db.get_status(row[0], user_id) == "accepted" or db.check_admin(user_id):
                     callback = f"delete_{row[0]}"
-                    keyboard.append([InlineKeyboardButton("Отменить встречу", callback_data=callback)])
+                    keyboard.append([InlineKeyboardButton(get_text(lang, 'cancel_meeting'), callback_data=callback)])
 
                 callback = f"change_{row[0]}_{user_id}_{db.get_status(row[0], user_id)}"
-                keyboard.append([InlineKeyboardButton("Изменить свой статус", callback_data=callback)])
+                keyboard.append([InlineKeyboardButton(get_text(lang, 'change_status'), callback_data=callback)])
+
                 if city != "0" and city is not None:
                     callback = f"ai_{row[0]}_{user_id}"
-                    keyboard.append([InlineKeyboardButton("Посмотреть совет от нейросети", callback_data=callback)])
+                    keyboard.append([InlineKeyboardButton(get_text(lang, 'ai_advice'), callback_data=callback)])
+
                 meetings_count += 1
 
                 await context.bot.send_message(
@@ -167,8 +179,7 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
         if not meetings_count:
-            text = "Встречи не найдены!"
-            await context.bot.send_message(chat_id=query.message.chat_id, text=text)
+            await context.bot.send_message(chat_id=query.message.chat_id, text=get_text(lang, 'no_meetings'))
 
         await sendMENU(update, context)
         return config.MENU
@@ -176,8 +187,8 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("delete_"):
         meeting_id = int(data.split("_")[1])
         db.delete_meeting(meeting_id)
-        text = "Встреча удалена."
-        keyboard = [[menu_btn]]
+        text = get_text(lang, 'deleted')
+        keyboard = [[InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")]]
         await context.bot.send_message(
             chat_id=query.message.chat_id,
             text=text,
@@ -194,61 +205,58 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows = db.get_all_status(meeting_id)
         users = db.get_name_from_user_id(user_id)
         fname, uname = users
-        keyboard = [[menu_btn]]
-        label = f"{fname} ({uname})" if fname and uname else fname or uname or str(user_id)
+        keyboard = [[InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")]]
+        label = f"{fname} ({uname})" if fname else uname or str(user_id)
 
         if status == "accepted":
             for usid in rows[0]:
-                text = "Вы отказались от встречи."
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
-                    text=text,
+                    text=get_text(lang, 'rejected_user'),
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
                 await context.bot.send_message(
                     chat_id=usid[0],
-                    text=f"Пользователь {label} отказался от приглашения("
+                    text=f"{label} {get_text(lang, 'rejected_owner')}"
                 )
         else:
             for usid in rows[0]:
-                text = "Вы согласились на встречу!"
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
-                    text=text,
+                    text=get_text(lang, 'agreed_user'),
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
                 await context.bot.send_message(
                     chat_id=usid[0],
-                    text=f"Пользователь {label} согласился на встречу!"
+                    text=f"{label} {get_text(lang, 'agreed_owner')}"
                 )
 
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text="Статус изменён.",
-            reply_markup=InlineKeyboardMarkup([[menu_btn]])
+            text=get_text(lang, 'status_changed'),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")]])
         )
         return config.MENU
 
     elif data.startswith("invite_"):
         meeting_id = int(data.split("_")[1])
         users = db.get_all_users()
-        keyboard = [[menu_btn]]
         if not users:
             await query.edit_message_text(
-                "Попроси друзей написать /start боту!",
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                get_text(lang, 'no_users'),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")]])
             )
             return config.MENU
 
         keyboard = []
         for fname, uname, uid in users:
-            label = f"{fname} ({uname})" if fname and uname else fname or uname or str(uid)
+            label = f"{fname} ({uname})" if fname else uname or str(uid)
             callback = f"pick_{meeting_id}_{uid}"
             keyboard.append([InlineKeyboardButton(label, callback_data=callback)])
-        keyboard.append([InlineKeyboardButton("Отмена", callback_data="menu")])
+        keyboard.append([InlineKeyboardButton(get_text(lang, 'cancel'), callback_data="menu")])
 
         await query.edit_message_text(
-            "Выберите пользователя для приглашения:",
+            get_text(lang, 'choose_person'),
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return config.INVITEE
@@ -263,32 +271,39 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if data.startswith("accept_"):
             status = "accepted"
-            await query.edit_message_text("Ты принял приглашение!")
+            await query.edit_message_text(get_text(lang, 'agreed_user'))
             if inviter_id:
-                await context.bot.send_message(chat_id=inviter_id, text=f"Пользователь {name} принял приглашение!")
+                await context.bot.send_message(chat_id=inviter_id, text=f"{name} {get_text(lang, 'agreed_owner')}")
         else:
             status = "declined"
-            await query.edit_message_text("Ты отказался от приглашения.")
+            await query.edit_message_text(get_text(lang, 'rejected_user'))
             if inviter_id:
-                await context.bot.send_message(chat_id=inviter_id, text=f"Пользователь {name} отказался от приглашения(")
+                await context.bot.send_message(chat_id=inviter_id, text=f"{name} {get_text(lang, 'rejected_owner')}")
 
         if inviter_id:
             db.update_status(meeting_id, user_id, status)
         else:
-            await query.edit_message_text("Ошибка: приглашающий не найден. Статус не обновлён.")
+            await query.edit_message_text(get_text(lang, 'invite_fail'))
 
         await sendMENU(update, context)
         return config.MENU
 
+    elif data == "switch_lang":
+        current = get_user_lang(user_id)
+        new = 'en' if current == 'ru' else 'ru'
+        set_user_lang(user_id, new)
+        await sendMENU(update, context)
+        return config.MENU
+
     elif data == "user":
-        text = "Список всех пользователей:\n\n"
-        user = db.get_all_users()
-        i = 0
-        for u in user:
-            i += 1
-            fname, uname, uid = u
-            text += f"{i}. {fname} {uname} {uid}\n"
-        keyboard = [[menu_btn], [InlineKeyboardButton("Удалить пользователя", callback_data="deleteuser")]]
+        text = get_text(lang, 'user_list') + "\n\n"
+        users = db.get_all_users()
+        for i, (fname, uname, uid) in enumerate(users, 1):
+            text += f"{i}. {fname} {uname} (ID: {uid})\n"
+        keyboard = [
+            [InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")],
+            [InlineKeyboardButton(get_text(lang, 'delete_user'), callback_data="deleteuser")]
+        ]
         await context.bot.send_message(
             chat_id=query.message.chat_id,
             text=text,
@@ -299,22 +314,22 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("ai_"):
         parts = data.split("_")
         if len(parts) < 3:
-            await query.edit_message_text("Ошибка в данных.")
+            await query.edit_message_text(get_text(lang, 'error_data'))
             return config.MENU
         meeting_id, user_id = int(parts[1]), int(parts[2])
         rows = db.get_meeting_info(meeting_id)
         if not rows:
-            await query.edit_message_text("Встреча не найдена.")
+            await query.edit_message_text(get_text(lang, 'meeting_not_found'))
             return config.MENU
         row = rows[0]
         date, time, place = row[1], row[2], row[3]
         city = db.get_city(user_id)
         if not city or city == "0":
-            advice = "⚠️ Сначала укажите свой город в меню."
+            advice = get_text(lang, 'ai_advice_hint')
         else:
             forecast = await get_weather_for_meeting(city, date, time)
             advice = await get_ai(forecast, place)
-        keyboard = [[menu_btn]]
+        keyboard = [[InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")]]
         await context.bot.send_message(
             chat_id=query.message.chat_id,
             text=advice,
@@ -323,15 +338,15 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return config.MENU
 
     elif data == "deleteuser":
-        await context.bot.send_message(chat_id=query.message.chat_id, text="Введите ID пользователя")
+        await context.bot.send_message(chat_id=query.message.chat_id, text=get_text(lang, 'enter_id'))
         return config.DELETE
 
     elif data == "city":
-        await context.bot.send_message(chat_id=query.message.chat_id, text="Введите название города (на английском, например Moscow):")
+        await context.bot.send_message(chat_id=query.message.chat_id, text=get_text(lang, 'enter_city'))
         return config.CITY
 
     elif data == "admin":
-        await context.bot.send_message(chat_id=query.message.chat_id, text="Введите ID пользователя")
+        await context.bot.send_message(chat_id=query.message.chat_id, text=get_text(lang, 'enter_id'))
         return config.ADMIN
 
     elif data == "adminlist":
@@ -342,33 +357,34 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return config.MENU
 
     elif data == "end":
-        await query.edit_message_text("До встречи!")
+        await query.edit_message_text(get_text(lang, 'end'))
         return ConversationHandler.END
 
     return config.MENU
 
 
 async def datereceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang = get_user_lang(user_id)
     raw = update.message.text
     try:
         dt_obj = datetime.strptime(raw, "%d.%m.%Y")
         context.user_data['date'] = dt_obj.strftime("%Y-%m-%d")
     except ValueError:
-        await update.message.reply_text("Неверный формат, используй ДД.ММ.ГГГГ")
+        await update.message.reply_text(get_text(lang, 'date_error'))
         return config.DATE
-    await update.message.reply_text('Отлично, во сколько хочешь встретиться? (формат ЧЧ:ММ, время по МСК)')
+    await update.message.reply_text(get_text(lang, 'ask_time'))
     return config.TIME
 
 
 async def timereceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang = get_user_lang(user_id)
     time_str = update.message.text.strip()
-
     try:
         datetime.strptime(time_str, "%H:%M")
     except ValueError:
-        await update.message.reply_text(
-            "❌ Неверный формат времени. Введите время в формате ЧЧ:ММ, например 14:30"
-        )
+        await update.message.reply_text(get_text(lang, 'time_error'))
         return config.TIME
 
     date_str = context.user_data.get("date")
@@ -380,14 +396,14 @@ async def timereceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dt_utc = dt_moscow.astimezone(utc_tz)
 
     if dt_utc < datetime.now(utc_tz):
-        await update.message.reply_text("❌ Эта дата и время уже прошли. Выберите будущее время.")
+        await update.message.reply_text(get_text(lang, 'past_time'))
         return config.DATE
 
     context.user_data['date'] = dt_utc.strftime("%Y-%m-%d")
     context.user_data['time'] = dt_utc.strftime("%H:%M")
 
-    keyboard = [[menu_btn]]
-    city = db.get_city(update.message.from_user.id)
+    keyboard = [[InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")]]
+    city = db.get_city(user_id)
     if city:
         weather = await get_weather_for_meeting(city, context.user_data['date'], context.user_data['time'])
         await context.bot.send_message(
@@ -398,24 +414,25 @@ async def timereceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await context.bot.send_message(
             chat_id=update.message.chat_id,
-            text="Если хотите увидеть прогноз погоды для своего города на этот день – введите название города в главном меню."
+            text=get_text(lang, 'city_hint')
         )
 
-    await update.message.reply_text(
-        'Какое прекрасное место станет вашей точкой встречи (лучше пиши с предлогом, например "в торговом центре")?'
-    )
+    await update.message.reply_text(get_text(lang, 'ask_place'))
     return config.PLACE
 
 
 async def placereceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang = get_user_lang(user_id)
     context.user_data['place'] = update.message.text
-    await update.message.reply_text('Желаешь ли ты оставить какой-либо комментарий?')
+    await update.message.reply_text(get_text(lang, 'ask_comment'))
     return config.COMMENT
 
 
 async def commentreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     chat_id = update.message.chat_id
+    lang = get_user_lang(user_id)
     date = context.user_data.get("date")
     time = context.user_data.get("time")
     place = context.user_data.get("place")
@@ -426,17 +443,15 @@ async def commentreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.update_status(meeting_id, user_id, "accepted")
 
     invite_btn = InlineKeyboardButton(
-        "Пригласить друга",
+        get_text(lang, 'invite_friend'),
         callback_data=f"invite_{meeting_id}"
     )
-    keyboard = [[invite_btn], [menu_btn]]
+    keyboard = [[invite_btn], [InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(
-        'Окей, все запомнил и записал, скину напоминалки тебе и твоим друзьям',
-        reply_markup=reply_markup
-    )
+    await update.message.reply_text(get_text(lang, 'saved'), reply_markup=reply_markup)
 
+    # Напоминания
     remind_dt1, remind_dt2, remind_dt3, remind_dt4 = get_remind_datetime(date, time)
     job_queue = context.application.job_queue
 
@@ -484,16 +499,18 @@ async def invitee_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    user_id = query.from_user.id
+    lang = get_user_lang(user_id)
 
     if data.startswith("pick_"):
         parts = data.split("_")
         meeting_id = int(parts[1])
         invitee_id = int(parts[2])
-        inviter_id = query.from_user.id
+        inviter_id = user_id
 
         existing = db.get_status(meeting_id, invitee_id)
         if existing is not None:
-            await query.edit_message_text("Этот пользователь уже приглашён на эту встречу.")
+            await query.edit_message_text(get_text(lang, 'already_invited'))
             await sendMENU(update, context)
             return config.MENU
 
@@ -506,27 +523,28 @@ async def invitee_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
 
         if not row:
-            await query.edit_message_text("Встреча не найдена.")
+            await query.edit_message_text(get_text(lang, 'meeting_not_found'))
             return config.MENU
 
         date, time, place = row
         try:
             await context.bot.send_message(
                 chat_id=invitee_id,
-                text=f"Тебя пригласили на встречу 😍\n\n"
-                     f"{format_datetime_moscow(date,time)},\n встреча намечается {place} 🤯\n"
-                     f"Ты придешь? 🤨",
+                text=(
+                    get_text(lang, 'invited1') +
+                    f"{format_datetime_moscow(date, time)},\n" +
+                    f"{get_text(lang, 'invited2')} {place} {get_text(lang, 'invited3')}"
+                ),
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✅ Да, конечно!", callback_data=f"accept_{meeting_id}_{invitee_id}"),
-                     InlineKeyboardButton("❌ Не, я пасс", callback_data=f"decline_{meeting_id}_{invitee_id}")]
+                    [
+                        InlineKeyboardButton(get_text(lang, 'agree'), callback_data=f"accept_{meeting_id}_{invitee_id}"),
+                        InlineKeyboardButton(get_text(lang, 'discard'), callback_data=f"decline_{meeting_id}_{invitee_id}")
+                    ]
                 ])
             )
-            await query.edit_message_text("Приглашение отправлено!")
+            await query.edit_message_text(get_text(lang, 'invite_sent'))
         except Exception as e:
-            await query.edit_message_text(
-                f"Не удалось отправить приглашение. Возможно, пользователь ещё не писал боту.\n"
-                f"Попросите написать /start, затем попробуйте снова."
-            )
+            await query.edit_message_text(get_text(lang, 'invite_fail'))
 
         await sendMENU(update, context)
         return config.MENU
@@ -537,38 +555,41 @@ async def invitee_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[menu_btn]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text('Окей, отменил твою встречу', reply_markup=reply_markup)
+    user_id = update.effective_user.id
+    lang = get_user_lang(user_id)
+    keyboard = [[InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")]]
+    await update.message.reply_text(get_text(lang, 'meeting_canceled'), reply_markup=InlineKeyboardMarkup(keyboard))
     return ConversationHandler.END
 
 
 async def adminreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang = get_user_lang(user_id)
     try:
-        user_id = int(update.message.text.strip())
+        target_id = int(update.message.text.strip())
     except ValueError:
-        await update.message.reply_text("Введите корректный числовой ID.")
+        await update.message.reply_text(get_text(lang, 'enter_id_correct'))
         return config.ADMINLIST
 
-    if db.user_exists(user_id):
-        keyboard = [[InlineKeyboardButton("Открыть список администраторов", callback_data="adminlist")], [menu_btn]]
-        keyboardm = [[menu_btn]]
+    if db.user_exists(target_id):
+        keyboard = [
+            [InlineKeyboardButton(get_text(lang, 'admin_list'), callback_data="adminlist")],
+            [InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")]
+        ]
+        keyboardm = [[InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        if db.check_admin(user_id):
-            db.give_or_revoke_admin(user_id, 0)
-            await update.message.reply_text('Права администратора изъяты', reply_markup=reply_markup)
-            reply_markup = InlineKeyboardMarkup(keyboardm)
-            await context.bot.send_message(chat_id=user_id, text="Права администратора изъяты", reply_markup=reply_markup)
+        if db.check_admin(target_id):
+            db.give_or_revoke_admin(target_id, 0)
+            await update.message.reply_text(get_text(lang, 'taken_rights'), reply_markup=reply_markup)
+            await context.bot.send_message(chat_id=target_id, text=get_text(lang, 'taken_rights'), reply_markup=InlineKeyboardMarkup(keyboardm))
         else:
-            db.give_or_revoke_admin(user_id, 1)
-            await update.message.reply_text('Выданы права администратора', reply_markup=reply_markup)
-            reply_markup = InlineKeyboardMarkup(keyboardm)
-            await context.bot.send_message(chat_id=user_id, text="Выданы права администратора", reply_markup=reply_markup)
+            db.give_or_revoke_admin(target_id, 1)
+            await update.message.reply_text(get_text(lang, 'got_rights'), reply_markup=reply_markup)
+            await context.bot.send_message(chat_id=target_id, text=get_text(lang, 'got_rights'), reply_markup=InlineKeyboardMarkup(keyboardm))
     else:
-        keyboard = [[menu_btn]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await context.bot.send_message(chat_id=user_id, text="Пользователь не найден, проверьте ID!", reply_markup=reply_markup)
+        keyboard = [[InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")]]
+        await context.bot.send_message(chat_id=target_id, text=get_text(lang, 'user_not_found'), reply_markup=InlineKeyboardMarkup(keyboard))
 
     return config.ADMINLIST
 
@@ -576,43 +597,58 @@ async def adminreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def adminlistreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    admin = db.admin_list()
-    text = "Список админов:\n\n"
-    i = 0
-    for adm in admin:
+    user_id = query.from_user.id
+    lang = get_user_lang(user_id)
+    admins = db.admin_list()
+    text = get_text(lang, 'admin_list') + "\n\n"
+    for i, adm in enumerate(admins, 1):
         fname, uname = db.get_name_from_user_id(adm[0])
-        i += 1
-        text += f"{i}. {fname} {uname} {adm[0]}\n\n"
+        text += f"{i}. {fname} {uname} (ID: {adm[0]})\n"
 
-    keyboard = [[InlineKeyboardButton("Дать/забрать права администратора", callback_data="admin")], [menu_btn]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await context.bot.send_message(chat_id=query.message.chat_id, text=text, reply_markup=reply_markup)
+    keyboard = [
+        [InlineKeyboardButton(get_text(lang, 'give/take_rights'), callback_data="admin")],
+        [InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")]
+    ]
+    await context.bot.send_message(chat_id=query.message.chat_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard))
     return config.MENU
 
 
 async def deletereceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang = get_user_lang(user_id)
     try:
-        user_id = int(update.message.text.strip())
+        target_id = int(update.message.text.strip())
     except ValueError:
-        await update.message.reply_text("Введите корректный числовой ID.")
+        await update.message.reply_text(get_text(lang, 'enter_id_correct'))
         return config.MENU
 
-    reply_markup = InlineKeyboardMarkup([[menu_btn], [InlineKeyboardButton("Список пользователей", callback_data="user")]])
-    if db.user_exists(user_id):
-        db.delete_user(user_id)
-        await update.message.reply_text("Пользователь удален", reply_markup=reply_markup)
+    reply_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")],
+        [InlineKeyboardButton(get_text(lang, 'user_list'), callback_data="user")]
+    ])
+    if db.user_exists(target_id):
+        db.delete_user(target_id)
+        await update.message.reply_text(get_text(lang, 'user_deleted'), reply_markup=reply_markup)
     else:
-        await update.message.reply_text("Пользователя не существует. Проверьте ID", reply_markup=reply_markup)
+        await update.message.reply_text(get_text(lang, 'user_not_exists'), reply_markup=reply_markup)
 
     return config.MENU
 
 
 async def cityreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang = get_user_lang(user_id)
     city = update.message.text.strip()
     if not city:
-        await update.message.reply_text("Введите корректное название города", reply_markup=InlineKeyboardMarkup([[menu_btn]]))
+        await update.message.reply_text(
+            get_text(lang, 'enter_city_correct'),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")]])
+        )
         return config.CITY
 
-    db.update_city(update.message.from_user.id, city)
-    await update.message.reply_text(f"Город изменен на {city}", reply_markup=InlineKeyboardMarkup([[menu_btn]]))
+    db.update_city(user_id, city)
+    await update.message.reply_text(
+        f"{get_text(lang, 'city_changed')} {city}",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")]])
+    )
     return config.MENU

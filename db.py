@@ -35,6 +35,10 @@ def init_db():
         cur.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
     if 'city' not in columns:   # отдельная проверка для city
         cur.execute("ALTER TABLE users ADD COLUMN city TEXT DEFAULT '0'")
+    cur.execute("PRAGMA table_info(users)")
+    columns = [info[1] for info in cur.fetchall()]
+    if 'lang' not in columns:
+        cur.execute("ALTER TABLE users ADD COLUMN lang TEXT DEFAULT 'ru'")
     conn.commit()
     conn.close()
 
