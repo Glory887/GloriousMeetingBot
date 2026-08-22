@@ -7,13 +7,18 @@ from config import DB_NAME
 
 logger = logging.getLogger(__name__)
 
-# Константы для напоминаний
+# --- Reminder timing constants (hours before meeting) ---
 REMIND_BEFORE_HOURS1 = 48
 REMIND_BEFORE_HOURS2 = 24
 REMIND_BEFORE_HOURS3 = 2
 REMIND_BEFORE_HOURS4 = 1
 
+
 def get_remind_datetime(date_str, time_str):
+    """
+    Calculate the four reminder times (48h, 24h, 2h, 1h before the meeting).
+    Returns tuple of datetime objects.
+    """
     meeting_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
     remind_dt1 = meeting_dt - timedelta(hours=REMIND_BEFORE_HOURS1)
     remind_dt2 = meeting_dt - timedelta(hours=REMIND_BEFORE_HOURS2)
@@ -21,14 +26,23 @@ def get_remind_datetime(date_str, time_str):
     remind_dt4 = meeting_dt - timedelta(hours=REMIND_BEFORE_HOURS4)
     return remind_dt1, remind_dt2, remind_dt3, remind_dt4
 
+
 async def send_meeting_reminder(context):
+    """
+    Callback function triggered by JobQueue when a reminder is due.
+    Sends a notification to the user with meeting details and time left.
+    Uses the user's preferred language (RU/EN) to format date/time.
+    """
     job = context.job
     meeting_id = job.data.get("meeting_id")
     chat_id = job.chat_id
     user_id = job.user_id
     period = job.data.get("period", "1 час")
 
+    # Get user language from database
     lang = get_user_lang(user_id)
+
+    # Fetch meeting details
     meeting_info = get_meeting_info(meeting_id)
     if not meeting_info:
         logger.warning(f"Meeting {meeting_id} not found for reminder")
@@ -39,6 +53,7 @@ async def send_meeting_reminder(context):
     place = row[3]
     comment = row[4] or ('отсутствует' if lang == 'ru' else 'none')
 
+    # Format date according to language (MSK for RU, UTC for EN)
     if lang == 'en':
         date_formatted = format_datetime_utc(date_str, time_str)
         text = (f"Meeting reminder!\n\n"
@@ -56,7 +71,12 @@ async def send_meeting_reminder(context):
 
     await context.bot.send_message(chat_id=chat_id, text=text)
 
+
 def restore_reminders(app):
+    """
+    Restore reminder jobs from the database on bot startup.
+    Finds all future meetings and schedules reminders if not already scheduled.
+    """
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     cur.execute("""
@@ -77,6 +97,7 @@ def restore_reminders(app):
     for meeting_id, chat_id, user_id, date_str, time_str in rows:
         remind_dt1, remind_dt2, remind_dt3, remind_dt4 = get_remind_datetime(date_str, time_str)
         remind_times = [remind_dt1, remind_dt2, remind_dt3, remind_dt4]
+        # Skip if the earliest reminder (1 hour) has already passed
         if remind_dt4 < datetime.now():
             continue
         for i, remind_dt in enumerate(remind_times, start=1):
