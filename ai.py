@@ -1,5 +1,5 @@
 from openai import OpenAI
-from db import OPENAI_API_KEY
+from config import OPENAI_API_KEY
 async def get_ai(forecast, place):
     if not OPENAI_API_KEY:
         return "⚠️ Нейросеть не настроена: отсутствует API-ключ."
