@@ -5,7 +5,7 @@ import db
 import sqlite3
 from datetime import datetime
 import zoneinfo
-from utils import format_datetime_moscow
+from utils import format_datetime_moscow, format_datetime_utc
 from reminder import send_meeting_reminder, get_remind_datetime
 from ai import get_ai
 from getweather import get_weather_for_meeting
@@ -14,7 +14,6 @@ from db import get_user_lang, set_user_lang
 
 
 async def sendMENU(update_or_query, context):
-    # Определяем user_id
     if update_or_query.callback_query and update_or_query.callback_query.message:
         user_id = update_or_query.callback_query.from_user.id
     else:
@@ -22,7 +21,6 @@ async def sendMENU(update_or_query, context):
 
     lang = get_user_lang(user_id)
 
-    # Кнопки с текстами из JSON
     meeting_btn = InlineKeyboardButton(get_text(lang, 'meeting_btn'), callback_data="meetings")
     list_btn = InlineKeyboardButton(get_text(lang, 'list_btn'), callback_data="lists")
     city_btn = InlineKeyboardButton(get_text(lang, 'city_btn'), callback_data="city")
@@ -115,9 +113,14 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 keyboard = [[invite_btn]]
 
+                # Выбираем формат даты в зависимости от языка
+                if lang == 'en':
+                    date_formatted = format_datetime_utc(row[1], row[2])
+                else:
+                    date_formatted = format_datetime_moscow(row[1], row[2])
+
                 text = ""
-                # Используем ключи из вашего JSON – добавьте в JSON ключи date_label, place_label, comment_label
-                text += f"📅 {get_text(lang, 'date_label')}: {format_datetime_moscow(row[1], row[2])} (МСК)\n"
+                text += f"📅 {get_text(lang, 'date_label')}: {date_formatted}\n"
                 text += f"📍 {get_text(lang, 'place_label')}: {row[3]}\n"
                 text += f"💬 {get_text(lang, 'comment_label')}: {row[4]}\n\n"
 
@@ -133,10 +136,9 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 city = db.get_city(user_id)
                 if city:
-                    weather_text = await get_weather_for_meeting(city, row[1], row[2])
+                    weather_text = await get_weather_for_meeting(city, row[1], row[2], lang)
                     text += weather_text + "\n\n"
                 else:
-                    # Используем city_hint (добавьте в JSON)
                     text += get_text(lang, 'city_hint') + "\n\n"
 
                 answers = db.get_all_status(row[0])
@@ -327,7 +329,7 @@ async def buttonreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not city or city == "0":
             advice = get_text(lang, 'ai_advice_hint')
         else:
-            forecast = await get_weather_for_meeting(city, date, time)
+            forecast = await get_weather_for_meeting(city, date, time, lang)
             advice = await get_ai(forecast, place)
         keyboard = [[InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")]]
         await context.bot.send_message(
@@ -405,7 +407,7 @@ async def timereceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton(get_text(lang, 'menu_btn'), callback_data="menu")]]
     city = db.get_city(user_id)
     if city:
-        weather = await get_weather_for_meeting(city, context.user_data['date'], context.user_data['time'])
+        weather = await get_weather_for_meeting(city, context.user_data['date'], context.user_data['time'], lang)
         await context.bot.send_message(
             chat_id=update.message.chat_id,
             text=weather,
@@ -451,7 +453,6 @@ async def commentreceived(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(get_text(lang, 'saved'), reply_markup=reply_markup)
 
-    # Напоминания
     remind_dt1, remind_dt2, remind_dt3, remind_dt4 = get_remind_datetime(date, time)
     job_queue = context.application.job_queue
 
@@ -527,12 +528,17 @@ async def invitee_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return config.MENU
 
         date, time, place = row
+        if lang == 'en':
+            date_formatted = format_datetime_utc(date, time)
+        else:
+            date_formatted = format_datetime_moscow(date, time)
+
         try:
             await context.bot.send_message(
                 chat_id=invitee_id,
                 text=(
                     get_text(lang, 'invited1') +
-                    f"{format_datetime_moscow(date, time)},\n" +
+                    f"{date_formatted},\n" +
                     f"{get_text(lang, 'invited2')} {place} {get_text(lang, 'invited3')}"
                 ),
                 reply_markup=InlineKeyboardMarkup([
