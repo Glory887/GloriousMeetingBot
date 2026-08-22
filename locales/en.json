@@ -5,7 +5,7 @@
   "list_btn": "View meetings",
   "city_btn": "Change city",
   "end_btn": "Finish",
-  "change_lang": "🇬🇧 English",
+  "change_lang": "Изменить язык/change language",
   "ask_date": "Enter meeting date (DD.MM.YYYY):",
   "ask_time": "Great, what time? (HH:MM, Moscow time)",
   "ask_place": "Where will the meeting be? (e.g. 'in the mall')",
